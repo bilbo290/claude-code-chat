@@ -4,23 +4,18 @@ import { ToolDisplay } from "./ToolDisplay";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Card } from "@/components/ui/card";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import {
-  Sidebar,
-  SidebarContent,
-  SidebarHeader,
-  SidebarMenu,
-  SidebarMenuItem,
-  SidebarMenuButton,
-  SidebarProvider,
-  SidebarTrigger,
-  SidebarInset,
-} from "@/components/ui/sidebar";
 import {
   Send,
   Bot,
@@ -33,6 +28,7 @@ import {
   History,
   Terminal,
   Square,
+  Menu,
 } from "lucide-react";
 
 interface ToolUse {
@@ -70,7 +66,7 @@ export function Chat() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [currentRequestId, setCurrentRequestId] = useState<string | null>(null);
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const [sheetOpen, setSheetOpen] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -104,11 +100,13 @@ export function Chat() {
   const startNewSession = () => {
     setMessages([]);
     setCurrentSessionId(null);
+    setSheetOpen(false);
   };
 
   const selectSession = async (sessionId: string) => {
     setCurrentSessionId(sessionId);
     setIsLoading(true);
+    setSheetOpen(false);
 
     try {
       const res = await fetch(`/api/sessions/${sessionId}`);
@@ -116,7 +114,6 @@ export function Chat() {
 
       if (data.success) {
         setMessages(data.messages);
-        // Scroll to bottom after messages load
         setTimeout(scrollToBottom, 200);
       } else {
         setMessages([]);
@@ -167,7 +164,6 @@ export function Chat() {
             thinking: data.thinking,
           },
         ]);
-        // Refresh sessions list
         fetchSessions();
       } else {
         setMessages((prev) => [
@@ -226,217 +222,223 @@ export function Chat() {
   };
 
   return (
-    <SidebarProvider>
-      <Sidebar>
-        <SidebarHeader className="border-b px-4 py-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <History className="h-5 w-5" />
-              <span className="font-semibold">Sessions</span>
-            </div>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={startNewSession}
-              className="h-8 w-8"
-            >
-              <Plus className="h-4 w-4" />
+    <div className="flex h-dvh w-full flex-col overflow-hidden bg-background">
+      {/* Header */}
+      <header className="flex shrink-0 items-center gap-2 border-b px-3 py-2">
+        <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
+          <SheetTrigger asChild>
+            <Button variant="ghost" size="icon" className="h-8 w-8">
+              <Menu className="h-4 w-4" />
             </Button>
-          </div>
-        </SidebarHeader>
-        <SidebarContent>
-          <ScrollArea className="h-full">
-            <SidebarMenu className="p-2">
-              {sessions.map((session) => (
-                <SidebarMenuItem key={session.id}>
-                  <SidebarMenuButton
+          </SheetTrigger>
+          <SheetContent side="left" className="w-72 p-0">
+            <SheetHeader className="border-b px-4 py-3">
+              <SheetTitle className="flex items-center gap-2 text-base">
+                <History className="h-4 w-4" />
+                Sessions
+              </SheetTitle>
+            </SheetHeader>
+            <div className="flex flex-col">
+              <Button
+                variant="ghost"
+                onClick={startNewSession}
+                className="m-2 justify-start gap-2"
+              >
+                <Plus className="h-4 w-4" />
+                New Session
+              </Button>
+              <div className="h-px bg-border" />
+              <div className="flex-1 overflow-y-auto">
+                {sessions.map((session) => (
+                  <button
+                    key={session.id}
                     onClick={() => selectSession(session.id)}
-                    isActive={currentSessionId === session.id}
-                    className="w-full justify-between"
+                    className={`flex w-full items-center justify-between px-4 py-3 text-left text-sm hover:bg-muted ${
+                      currentSessionId === session.id ? "bg-muted" : ""
+                    }`}
                   >
-                    <div className="flex items-center gap-2 truncate">
-                      <MessageSquare className="h-4 w-4 shrink-0" />
+                    <span className="flex items-center gap-2 truncate">
+                      <MessageSquare className="h-4 w-4 shrink-0 text-muted-foreground" />
                       <span className="truncate font-mono text-xs">
                         {session.id.slice(0, 8)}...
                       </span>
-                    </div>
-                    <span className="text-xs text-muted-foreground">
+                    </span>
+                    <span className="shrink-0 text-xs text-muted-foreground">
                       {formatDate(session.modified)}
                     </span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
-              {sessions.length === 0 && (
-                <div className="px-4 py-8 text-center text-sm text-muted-foreground">
-                  No sessions yet
-                </div>
-              )}
-            </SidebarMenu>
-          </ScrollArea>
-        </SidebarContent>
-      </Sidebar>
-
-      <SidebarInset className="flex h-screen min-w-0 flex-col overflow-x-hidden">
-        {/* Header */}
-        <header className="flex items-center gap-2 border-b px-2 py-2 sm:px-4 sm:py-3">
-          <SidebarTrigger />
-          <div className="flex min-w-0 items-center gap-2 sm:gap-3">
-            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary sm:h-9 sm:w-9">
-              <Bot className="h-4 w-4 text-primary-foreground sm:h-5 sm:w-5" />
+                  </button>
+                ))}
+                {sessions.length === 0 && (
+                  <p className="p-4 text-center text-sm text-muted-foreground">
+                    No sessions yet
+                  </p>
+                )}
+              </div>
             </div>
-            <div className="min-w-0">
-              <h1 className="text-base font-semibold sm:text-lg">Claude Code</h1>
-              {cwd && (
-                <p className="truncate font-mono text-[10px] text-muted-foreground sm:text-xs">{cwd}</p>
-              )}
-            </div>
+          </SheetContent>
+        </Sheet>
+
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary">
+            <Bot className="h-4 w-4 text-primary-foreground" />
           </div>
-        </header>
-
-        {/* Messages */}
-        <ScrollArea className="flex-1 overflow-x-hidden" ref={scrollRef}>
-          <div className="mx-auto w-full space-y-3 overflow-x-hidden p-2 sm:max-w-3xl sm:space-y-4 sm:p-4">
-            {messages.length === 0 && (
-              <div className="flex flex-col items-center justify-center py-16 text-center">
-                <Bot className="mb-4 h-12 w-12 text-muted-foreground/50" />
-                <p className="text-muted-foreground">
-                  {currentSessionId
-                    ? "Continue this conversation"
-                    : "Send a message to start chatting with Claude Code"}
-                </p>
-              </div>
-            )}
-
-            {messages.map((msg, i) => (
-              <div
-                key={i}
-                className={`flex gap-2 sm:gap-3 ${msg.role === "user" ? "justify-end" : ""} ${msg.role === "system" ? "justify-center" : ""}`}
-              >
-                {msg.role === "assistant" && (
-                  <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-orange-500/10 sm:h-8 sm:w-8">
-                    <Bot className="h-3 w-3 text-orange-500 sm:h-4 sm:w-4" />
-                  </div>
-                )}
-
-                {msg.role === "system" ? (
-                  <div className="flex items-center gap-2 rounded-full bg-cyan-500/10 px-3 py-1 text-xs text-cyan-400">
-                    <Terminal className="h-3 w-3" />
-                    <span>{msg.content}</span>
-                  </div>
-                ) : (
-                  <div className="flex min-w-0 max-w-[80%] flex-col gap-2 overflow-hidden">
-                    {/* Thinking block */}
-                    {msg.thinking && msg.thinking.length > 0 && (
-                      <Collapsible>
-                        <CollapsibleTrigger asChild>
-                          <button className="flex items-center gap-1.5 rounded-lg bg-purple-500/10 px-2 py-1.5 text-xs text-purple-400 transition-colors hover:bg-purple-500/20 sm:gap-2 sm:px-3 sm:py-2 sm:text-sm">
-                            <Brain className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-                            <span>Thinking</span>
-                            <ChevronDown className="h-3.5 w-3.5 transition-transform sm:h-4 sm:w-4 [[data-state=open]_&]:rotate-180" />
-                          </button>
-                        </CollapsibleTrigger>
-                        <CollapsibleContent>
-                          <Card className="mt-2 border-purple-500/20 bg-purple-500/5 px-3 py-2 sm:px-4 sm:py-3">
-                            <pre className="whitespace-pre-wrap break-words font-mono text-[10px] text-purple-300/80 sm:text-xs">
-                              {msg.thinking.join("\n\n")}
-                            </pre>
-                          </Card>
-                        </CollapsibleContent>
-                      </Collapsible>
-                    )}
-
-                    {/* Tool usage blocks */}
-                    {msg.toolUse && msg.toolUse.length > 0 && (
-                      <div className="flex flex-col gap-1">
-                        {msg.toolUse.map((tool, ti) => (
-                          <ToolDisplay key={ti} name={tool.name} input={tool.input} />
-                        ))}
-                      </div>
-                    )}
-
-                    {/* Main response */}
-                    {msg.content && (
-                      <Card
-                        className={`overflow-hidden px-3 py-2 sm:px-4 sm:py-3 ${
-                          msg.role === "user"
-                            ? "bg-primary text-primary-foreground"
-                            : "bg-muted"
-                        }`}
-                      >
-                        {msg.role === "user" ? (
-                          <pre className="whitespace-pre-wrap break-all font-mono text-xs sm:text-sm">
-                            {msg.content}
-                          </pre>
-                        ) : (
-                          <div className="prose prose-sm prose-invert max-w-none overflow-x-auto text-xs sm:text-sm">
-                            <Markdown content={msg.content} />
-                          </div>
-                        )}
-                      </Card>
-                    )}
-                  </div>
-                )}
-
-                {msg.role === "user" && (
-                  <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/10 sm:h-8 sm:w-8">
-                    <User className="h-3 w-3 text-primary sm:h-4 sm:w-4" />
-                  </div>
-                )}
-              </div>
-            ))}
-
-            {isLoading && (
-              <div className="flex gap-2 sm:gap-3">
-                <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-orange-500/10 sm:h-8 sm:w-8">
-                  <Bot className="h-3 w-3 text-orange-500 sm:h-4 sm:w-4" />
-                </div>
-                <Card className="bg-muted px-3 py-2 sm:px-4 sm:py-3">
-                  <div className="flex items-center gap-2 text-muted-foreground">
-                    <Loader2 className="h-3.5 w-3.5 animate-spin sm:h-4 sm:w-4" />
-                    <span className="text-xs sm:text-sm">Thinking...</span>
-                  </div>
-                </Card>
-              </div>
-            )}
-            <div ref={bottomRef} />
-          </div>
-        </ScrollArea>
-
-        {/* Input */}
-        <div className="border-t p-2 sm:p-4">
-          <div className="mx-auto flex w-full gap-2 sm:max-w-3xl">
-            <Textarea
-              ref={inputRef}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="Type a message..."
-              disabled={isLoading}
-              rows={2}
-              className="min-h-[50px] resize-none text-sm sm:min-h-[60px] sm:text-base"
-            />
-            {isLoading ? (
-              <Button
-                onClick={abortRequest}
-                variant="destructive"
-                size="icon"
-                className="h-[50px] w-[50px] shrink-0 sm:h-[60px] sm:w-[60px]"
-              >
-                <Square className="h-4 w-4 sm:h-5 sm:w-5" />
-              </Button>
-            ) : (
-              <Button
-                onClick={sendMessage}
-                disabled={!input.trim()}
-                size="icon"
-                className="h-[50px] w-[50px] shrink-0 sm:h-[60px] sm:w-[60px]"
-              >
-                <Send className="h-4 w-4 sm:h-5 sm:w-5" />
-              </Button>
+          <div className="min-w-0 flex-1">
+            <h1 className="text-sm font-semibold">Claude Code</h1>
+            {cwd && (
+              <p className="truncate text-[10px] text-muted-foreground">{cwd}</p>
             )}
           </div>
         </div>
-      </SidebarInset>
-    </SidebarProvider>
+      </header>
+
+      {/* Messages */}
+      <div className="flex-1 overflow-y-auto">
+        <div className="flex flex-col gap-3 p-3">
+          {messages.length === 0 && (
+            <div className="flex flex-col items-center justify-center py-16 text-center">
+              <Bot className="mb-4 h-12 w-12 text-muted-foreground/50" />
+              <p className="text-sm text-muted-foreground">
+                {currentSessionId
+                  ? "Continue this conversation"
+                  : "Send a message to start"}
+              </p>
+            </div>
+          )}
+
+          {messages.map((msg, i) => (
+            <MessageBubble key={i} message={msg} />
+          ))}
+
+          {isLoading && (
+            <div className="flex items-start gap-2">
+              <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-orange-500/10">
+                <Bot className="h-3 w-3 text-orange-500" />
+              </div>
+              <Card className="bg-muted px-3 py-2">
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  <span className="text-xs">Thinking...</span>
+                </div>
+              </Card>
+            </div>
+          )}
+          <div ref={bottomRef} />
+        </div>
+      </div>
+
+      {/* Input */}
+      <div className="shrink-0 border-t p-2">
+        <div className="flex gap-2">
+          <Textarea
+            ref={inputRef}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Type a message..."
+            disabled={isLoading}
+            rows={2}
+            className="min-h-[44px] flex-1 resize-none text-sm"
+          />
+          {isLoading ? (
+            <Button
+              onClick={abortRequest}
+              variant="destructive"
+              size="icon"
+              className="h-[44px] w-[44px] shrink-0"
+            >
+              <Square className="h-4 w-4" />
+            </Button>
+          ) : (
+            <Button
+              onClick={sendMessage}
+              disabled={!input.trim()}
+              size="icon"
+              className="h-[44px] w-[44px] shrink-0"
+            >
+              <Send className="h-4 w-4" />
+            </Button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MessageBubble({ message }: { message: Message }) {
+  if (message.role === "system") {
+    return (
+      <div className="flex justify-center">
+        <div className="flex items-center gap-1.5 rounded-full bg-cyan-500/10 px-2.5 py-1 text-[10px] text-cyan-400">
+          <Terminal className="h-3 w-3" />
+          <span>{message.content}</span>
+        </div>
+      </div>
+    );
+  }
+
+  const isUser = message.role === "user";
+
+  return (
+    <div className={`flex items-start gap-2 ${isUser ? "flex-row-reverse" : ""}`}>
+      <div
+        className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full ${
+          isUser ? "bg-primary/10" : "bg-orange-500/10"
+        }`}
+      >
+        {isUser ? (
+          <User className="h-3 w-3 text-primary" />
+        ) : (
+          <Bot className="h-3 w-3 text-orange-500" />
+        )}
+      </div>
+
+      <div className={`flex min-w-0 max-w-[85%] flex-col gap-1.5 ${isUser ? "items-end" : ""}`}>
+        {/* Thinking */}
+        {message.thinking && message.thinking.length > 0 && (
+          <Collapsible>
+            <CollapsibleTrigger asChild>
+              <button className="flex items-center gap-1.5 rounded-lg bg-purple-500/10 px-2 py-1 text-[10px] text-purple-400 hover:bg-purple-500/20">
+                <Brain className="h-3 w-3" />
+                <span>Thinking</span>
+                <ChevronDown className="h-3 w-3 [[data-state=open]_&]:rotate-180" />
+              </button>
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <Card className="mt-1.5 border-purple-500/20 bg-purple-500/5 p-2">
+                <pre className="whitespace-pre-wrap break-words text-[10px] text-purple-300/80">
+                  {message.thinking.join("\n\n")}
+                </pre>
+              </Card>
+            </CollapsibleContent>
+          </Collapsible>
+        )}
+
+        {/* Tools */}
+        {message.toolUse && message.toolUse.length > 0 && (
+          <div className="flex w-full flex-col gap-1">
+            {message.toolUse.map((tool, ti) => (
+              <ToolDisplay key={ti} name={tool.name} input={tool.input} />
+            ))}
+          </div>
+        )}
+
+        {/* Content */}
+        {message.content && (
+          <Card
+            className={`w-full break-words p-2.5 ${
+              isUser ? "bg-primary text-primary-foreground" : "bg-muted"
+            }`}
+          >
+            {isUser ? (
+              <p className="whitespace-pre-wrap text-xs">{message.content}</p>
+            ) : (
+              <div className="prose prose-sm prose-invert max-w-none text-xs [&_*]:break-words">
+                <Markdown content={message.content} />
+              </div>
+            )}
+          </Card>
+        )}
+      </div>
+    </div>
   );
 }
