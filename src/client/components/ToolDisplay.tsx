@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, memo } from "react";
 import { diffLines } from "diff";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
@@ -73,7 +73,7 @@ const getToolIcon = (name: string) => {
   return Wrench;
 };
 
-export function ToolDisplay({ name, input }: ToolDisplayProps) {
+export const ToolDisplay = memo(function ToolDisplay({ name, input }: ToolDisplayProps) {
   const hasExpandableContent =
     (name === "Edit" && input?.old_string && input?.new_string) ||
     (name === "Write" && input?.content) ||
@@ -164,9 +164,9 @@ export function ToolDisplay({ name, input }: ToolDisplayProps) {
       )}
     </Collapsible>
   );
-}
+});
 
-function DiffView({ oldStr, newStr }: { oldStr: string; newStr: string }) {
+const DiffView = memo(function DiffView({ oldStr, newStr }: { oldStr: string; newStr: string }) {
   const changes = diffLines(oldStr, newStr);
 
   return (
@@ -196,4 +196,4 @@ function DiffView({ oldStr, newStr }: { oldStr: string; newStr: string }) {
       })}
     </div>
   );
-}
+});

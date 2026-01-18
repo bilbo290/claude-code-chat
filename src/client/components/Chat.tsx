@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback, memo } from "react";
 import { Markdown } from "./Markdown";
 import { ToolDisplay } from "./ToolDisplay";
 import { Button } from "@/components/ui/button";
@@ -394,7 +394,7 @@ export function Chat() {
   );
 }
 
-function MessageBubble({ message }: { message: Message }) {
+const MessageBubble = memo(function MessageBubble({ message }: { message: Message }) {
   if (message.role === "system") {
     return (
       <div className="flex justify-center">
@@ -471,4 +471,4 @@ function MessageBubble({ message }: { message: Message }) {
       </div>
     </div>
   );
-}
+});

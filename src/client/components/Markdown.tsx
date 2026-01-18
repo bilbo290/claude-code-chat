@@ -1,3 +1,4 @@
+import { memo } from "react";
 import ReactMarkdown from "react-markdown";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
@@ -6,7 +7,7 @@ interface MarkdownProps {
   content: string;
 }
 
-export function Markdown({ content }: MarkdownProps) {
+export const Markdown = memo(function Markdown({ content }: MarkdownProps) {
   return (
     <ReactMarkdown
       components={{
@@ -110,4 +111,4 @@ export function Markdown({ content }: MarkdownProps) {
       {content}
     </ReactMarkdown>
   );
-}
+});
