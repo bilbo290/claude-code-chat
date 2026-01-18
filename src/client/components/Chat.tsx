@@ -222,9 +222,9 @@ export function Chat() {
   };
 
   return (
-    <div className="flex h-dvh w-full flex-col overflow-hidden bg-background">
+    <div className="flex h-dvh w-full flex-col overflow-hidden bg-background text-sm">
       {/* Header */}
-      <header className="flex shrink-0 items-center gap-2 border-b px-3 py-2">
+      <header className="flex shrink-0 items-center gap-2 border-b px-3 py-2.5">
         <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
           <SheetTrigger asChild>
             <Button variant="ghost" size="icon" className="h-8 w-8">
@@ -283,9 +283,9 @@ export function Chat() {
             <Bot className="h-4 w-4 text-primary-foreground" />
           </div>
           <div className="min-w-0 flex-1">
-            <h1 className="text-sm font-semibold">Claude Code</h1>
+            <h1 className="font-semibold">Claude Code</h1>
             {cwd && (
-              <p className="truncate text-[10px] text-muted-foreground">{cwd}</p>
+              <p className="truncate text-xs text-muted-foreground">{cwd}</p>
             )}
           </div>
         </div>
@@ -297,7 +297,7 @@ export function Chat() {
           {messages.length === 0 && (
             <div className="flex flex-col items-center justify-center py-16 text-center">
               <Bot className="mb-4 h-12 w-12 text-muted-foreground/50" />
-              <p className="text-sm text-muted-foreground">
+              <p className="text-muted-foreground">
                 {currentSessionId
                   ? "Continue this conversation"
                   : "Send a message to start"}
@@ -311,13 +311,13 @@ export function Chat() {
 
           {isLoading && (
             <div className="flex items-start gap-2">
-              <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-orange-500/10">
-                <Bot className="h-3 w-3 text-orange-500" />
+              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-orange-500/10">
+                <Bot className="h-4 w-4 text-orange-500" />
               </div>
               <Card className="bg-muted px-3 py-2">
                 <div className="flex items-center gap-2 text-muted-foreground">
-                  <Loader2 className="h-3 w-3 animate-spin" />
-                  <span className="text-xs">Thinking...</span>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <span>Thinking...</span>
                 </div>
               </Card>
             </div>
@@ -327,7 +327,7 @@ export function Chat() {
       </div>
 
       {/* Input */}
-      <div className="shrink-0 border-t p-2">
+      <div className="shrink-0 border-t p-2 pb-safe">
         <div className="flex gap-2">
           <Textarea
             ref={inputRef}
@@ -337,25 +337,25 @@ export function Chat() {
             placeholder="Type a message..."
             disabled={isLoading}
             rows={2}
-            className="min-h-[44px] flex-1 resize-none text-sm"
+            className="min-h-[48px] flex-1 resize-none"
           />
           {isLoading ? (
             <Button
               onClick={abortRequest}
               variant="destructive"
               size="icon"
-              className="h-[44px] w-[44px] shrink-0"
+              className="h-[48px] w-[48px] shrink-0"
             >
-              <Square className="h-4 w-4" />
+              <Square className="h-5 w-5" />
             </Button>
           ) : (
             <Button
               onClick={sendMessage}
               disabled={!input.trim()}
               size="icon"
-              className="h-[44px] w-[44px] shrink-0"
+              className="h-[48px] w-[48px] shrink-0"
             >
-              <Send className="h-4 w-4" />
+              <Send className="h-5 w-5" />
             </Button>
           )}
         </div>
@@ -368,8 +368,8 @@ function MessageBubble({ message }: { message: Message }) {
   if (message.role === "system") {
     return (
       <div className="flex justify-center">
-        <div className="flex items-center gap-1.5 rounded-full bg-cyan-500/10 px-2.5 py-1 text-[10px] text-cyan-400">
-          <Terminal className="h-3 w-3" />
+        <div className="flex items-center gap-1.5 rounded-full bg-cyan-500/10 px-3 py-1.5 text-xs text-cyan-400">
+          <Terminal className="h-3.5 w-3.5" />
           <span>{message.content}</span>
         </div>
       </div>
@@ -381,31 +381,31 @@ function MessageBubble({ message }: { message: Message }) {
   return (
     <div className={`flex items-start gap-2 ${isUser ? "flex-row-reverse" : ""}`}>
       <div
-        className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full ${
+        className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${
           isUser ? "bg-primary/10" : "bg-orange-500/10"
         }`}
       >
         {isUser ? (
-          <User className="h-3 w-3 text-primary" />
+          <User className="h-4 w-4 text-primary" />
         ) : (
-          <Bot className="h-3 w-3 text-orange-500" />
+          <Bot className="h-4 w-4 text-orange-500" />
         )}
       </div>
 
-      <div className={`flex min-w-0 max-w-[85%] flex-col gap-1.5 ${isUser ? "items-end" : ""}`}>
+      <div className={`flex min-w-0 max-w-[85%] flex-col gap-2 ${isUser ? "items-end" : ""}`}>
         {/* Thinking */}
         {message.thinking && message.thinking.length > 0 && (
           <Collapsible>
             <CollapsibleTrigger asChild>
-              <button className="flex items-center gap-1.5 rounded-lg bg-purple-500/10 px-2 py-1 text-[10px] text-purple-400 hover:bg-purple-500/20">
-                <Brain className="h-3 w-3" />
+              <button className="flex items-center gap-1.5 rounded-lg bg-purple-500/10 px-2.5 py-1.5 text-xs text-purple-400 hover:bg-purple-500/20">
+                <Brain className="h-3.5 w-3.5" />
                 <span>Thinking</span>
-                <ChevronDown className="h-3 w-3 [[data-state=open]_&]:rotate-180" />
+                <ChevronDown className="h-3.5 w-3.5 [[data-state=open]_&]:rotate-180" />
               </button>
             </CollapsibleTrigger>
             <CollapsibleContent>
-              <Card className="mt-1.5 border-purple-500/20 bg-purple-500/5 p-2">
-                <pre className="whitespace-pre-wrap break-words text-[10px] text-purple-300/80">
+              <Card className="mt-1.5 border-purple-500/20 bg-purple-500/5 p-2.5">
+                <pre className="whitespace-pre-wrap break-words text-xs text-purple-300/80">
                   {message.thinking.join("\n\n")}
                 </pre>
               </Card>
@@ -425,14 +425,14 @@ function MessageBubble({ message }: { message: Message }) {
         {/* Content */}
         {message.content && (
           <Card
-            className={`w-full break-words p-2.5 ${
+            className={`w-full break-words p-3 ${
               isUser ? "bg-primary text-primary-foreground" : "bg-muted"
             }`}
           >
             {isUser ? (
-              <p className="whitespace-pre-wrap text-xs">{message.content}</p>
+              <p className="whitespace-pre-wrap">{message.content}</p>
             ) : (
-              <div className="prose prose-sm prose-invert max-w-none text-xs [&_*]:break-words">
+              <div className="prose prose-sm prose-invert max-w-none [&_*]:break-words">
                 <Markdown content={message.content} />
               </div>
             )}

@@ -17,7 +17,7 @@ export function Markdown({ content }: MarkdownProps) {
           if (isInline) {
             return (
               <code
-                className="break-all rounded bg-zinc-700 px-1 py-0.5 text-[10px] text-zinc-200"
+                className="break-all rounded bg-zinc-700 px-1.5 py-0.5 text-[13px] text-zinc-200"
                 {...props}
               >
                 {children}
@@ -34,7 +34,7 @@ export function Markdown({ content }: MarkdownProps) {
               customStyle={{
                 margin: "0.5rem 0",
                 borderRadius: "0.375rem",
-                fontSize: "10px",
+                fontSize: "13px",
                 maxWidth: "100%",
                 overflow: "auto",
               }}

@@ -118,7 +118,28 @@
   * {
     @apply border-border outline-ring/50;
   }
-  html, body {
+  html {
     @apply overflow-x-hidden bg-background text-foreground;
+    overflow: hidden;
+    position: fixed;
+    width: 100%;
+    height: 100%;
   }
+  body {
+    @apply overflow-x-hidden bg-background text-foreground;
+    overflow: hidden;
+    position: fixed;
+    width: 100%;
+    height: 100%;
+  }
+  #root {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+  }
+}
+
+/* Safe area for mobile devices */
+.pb-safe {
+  padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
 }
