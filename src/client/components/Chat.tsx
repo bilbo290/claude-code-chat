@@ -29,6 +29,7 @@ import {
   Terminal,
   Square,
   Menu,
+  RefreshCw,
 } from "lucide-react";
 
 interface ToolUse {
@@ -67,6 +68,7 @@ export function Chat() {
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [currentRequestId, setCurrentRequestId] = useState<string | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -96,6 +98,24 @@ export function Chat() {
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  const refreshMessages = async () => {
+    if (!currentSessionId || isRefreshing) return;
+
+    setIsRefreshing(true);
+    try {
+      const res = await fetch(`/api/sessions/${currentSessionId}`);
+      const data = await res.json();
+      if (data.success) {
+        setMessages(data.messages);
+        setTimeout(scrollToBottom, 200);
+      }
+    } catch (error) {
+      console.error("Failed to refresh:", error);
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
 
   const startNewSession = () => {
     setMessages([]);
@@ -289,6 +309,16 @@ export function Chat() {
             )}
           </div>
         </div>
+
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8"
+          onClick={refreshMessages}
+          disabled={!currentSessionId || isRefreshing}
+        >
+          <RefreshCw className={`h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`} />
+        </Button>
       </header>
 
       {/* Messages */}
