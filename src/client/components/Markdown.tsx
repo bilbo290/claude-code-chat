@@ -1,4 +1,6 @@
 import ReactMarkdown from "react-markdown";
+import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
+import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 
 interface MarkdownProps {
   content: string;
@@ -9,7 +11,8 @@ export function Markdown({ content }: MarkdownProps) {
     <ReactMarkdown
       components={{
         code({ className, children, ...props }) {
-          const isInline = !className && !String(children).includes("\n");
+          const match = /language-(\w+)/.exec(className || "");
+          const isInline = !match && !String(children).includes("\n");
 
           if (isInline) {
             return (
@@ -23,11 +26,21 @@ export function Markdown({ content }: MarkdownProps) {
           }
 
           return (
-            <pre className="my-2 overflow-auto rounded bg-zinc-800 p-2 text-[10px]">
-              <code className="whitespace-pre-wrap break-all text-zinc-200" {...props}>
-                {children}
-              </code>
-            </pre>
+            <SyntaxHighlighter
+              style={oneDark}
+              language={match?.[1] || "text"}
+              PreTag="div"
+              wrapLongLines
+              customStyle={{
+                margin: "0.5rem 0",
+                borderRadius: "0.375rem",
+                fontSize: "10px",
+                maxWidth: "100%",
+                overflow: "auto",
+              }}
+            >
+              {String(children).replace(/\n$/, "")}
+            </SyntaxHighlighter>
           );
         },
         pre({ children }) {

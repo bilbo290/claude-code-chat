@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { diffLines } from "diff";
+import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
+import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import {
   Collapsible,
   CollapsibleContent,
@@ -16,6 +18,32 @@ import {
   Wrench,
   FilePlus,
 } from "lucide-react";
+
+const getLanguageFromPath = (filePath: string): string => {
+  const ext = filePath.split(".").pop()?.toLowerCase() || "";
+  const langMap: Record<string, string> = {
+    ts: "typescript",
+    tsx: "tsx",
+    js: "javascript",
+    jsx: "jsx",
+    py: "python",
+    rb: "ruby",
+    go: "go",
+    rs: "rust",
+    java: "java",
+    cpp: "cpp",
+    c: "c",
+    css: "css",
+    html: "html",
+    json: "json",
+    yaml: "yaml",
+    yml: "yaml",
+    md: "markdown",
+    sh: "bash",
+    sql: "sql",
+  };
+  return langMap[ext] || "text";
+};
 
 interface ToolInput {
   file_path?: string;
@@ -100,15 +128,36 @@ export function ToolDisplay({ name, input }: ToolDisplayProps) {
             )}
 
             {name === "Write" && input?.content && (
-              <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all p-2 text-zinc-300">
+              <SyntaxHighlighter
+                style={oneDark}
+                language={input?.file_path ? getLanguageFromPath(input.file_path) : "text"}
+                wrapLongLines
+                customStyle={{
+                  margin: 0,
+                  borderRadius: 0,
+                  fontSize: "10px",
+                  maxHeight: "200px",
+                  overflow: "auto",
+                }}
+              >
                 {input.content}
-              </pre>
+              </SyntaxHighlighter>
             )}
 
             {name === "Bash" && input?.command && (
-              <pre className="whitespace-pre-wrap break-all p-2 text-green-300">
-                $ {input.command}
-              </pre>
+              <SyntaxHighlighter
+                style={oneDark}
+                language="bash"
+                wrapLongLines
+                customStyle={{
+                  margin: 0,
+                  borderRadius: 0,
+                  fontSize: "10px",
+                  overflow: "auto",
+                }}
+              >
+                {input.command}
+              </SyntaxHighlighter>
             )}
           </div>
         </CollapsibleContent>
