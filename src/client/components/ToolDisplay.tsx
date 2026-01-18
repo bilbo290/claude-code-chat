@@ -99,7 +99,7 @@ export const ToolDisplay = memo(function ToolDisplay({ name, input }: ToolDispla
     <Collapsible open={isOpen} onOpenChange={setIsOpen}>
       <CollapsibleTrigger asChild>
         <button
-          className={`flex w-full items-center gap-1.5 rounded px-2.5 py-2 text-left text-xs ${
+          className={`flex w-full items-center gap-1.5 rounded-2xl px-3 py-2 text-left text-xs ${
             hasExpandableContent
               ? "bg-green-500/10 text-green-400"
               : "bg-zinc-800/50 text-zinc-400"
@@ -116,7 +116,7 @@ export const ToolDisplay = memo(function ToolDisplay({ name, input }: ToolDispla
 
       {hasExpandableContent && (
         <CollapsibleContent>
-          <div className="mt-1 overflow-hidden rounded bg-zinc-900 text-xs">
+          <div className="mt-1 overflow-hidden rounded-xl bg-zinc-900 text-xs">
             {input?.file_path && (
               <div className="truncate border-b border-zinc-800 bg-zinc-800/50 px-2.5 py-1.5 text-zinc-500">
                 {input.file_path}

@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, memo } from "react";
 import { Markdown } from "./Markdown";
 import { ToolDisplay } from "./ToolDisplay";
+import { CommandDisplay, hasCommandTags } from "./CommandDisplay";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Card } from "@/components/ui/card";
@@ -73,8 +74,11 @@ export function Chat() {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [visibleCount, setVisibleCount] = useState(MESSAGES_PER_PAGE);
+  const [streamingSessionId, setStreamingSessionId] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const pollingRef = useRef<number | null>(null);
+  const messageCountRef = useRef<number>(0);
 
   const fetchSessions = async () => {
     try {
@@ -103,6 +107,68 @@ export function Chat() {
     scrollToBottom();
   }, [messages]);
 
+  // Poll for streaming updates while loading
+  useEffect(() => {
+    if (!isLoading) {
+      if (pollingRef.current) {
+        clearInterval(pollingRef.current);
+        pollingRef.current = null;
+      }
+      return;
+    }
+
+    console.log("[Polling] Starting polling, isLoading:", isLoading);
+
+    const pollSession = async () => {
+      try {
+        let sessionId = streamingSessionId || currentSessionId;
+        console.log("[Polling] Poll tick, sessionId:", sessionId);
+
+        // If no session ID, try to find the newest one
+        if (!sessionId) {
+          const sessionsRes = await fetch("/api/sessions");
+          const sessionsData = await sessionsRes.json();
+          console.log("[Polling] Fetched sessions:", sessionsData.sessions?.length);
+          if (sessionsData.success && sessionsData.sessions.length > 0) {
+            sessionId = sessionsData.sessions[0].id;
+            console.log("[Polling] Using newest session:", sessionId);
+            setStreamingSessionId(sessionId);
+            setCurrentSessionId(sessionId);
+          }
+        }
+
+        if (!sessionId) {
+          console.log("[Polling] No session ID yet");
+          return;
+        }
+
+        const res = await fetch(`/api/sessions/${sessionId}`);
+        const data = await res.json();
+        console.log("[Polling] Got messages:", data.messages?.length, "baseline:", messageCountRef.current);
+        // Only update if we have MORE messages than our baseline (user message + response)
+        if (data.success && data.messages.length > messageCountRef.current) {
+          setMessages(data.messages);
+          messageCountRef.current = data.messages.length;
+        }
+      } catch (err) {
+        console.log("[Polling] Error:", err);
+      }
+    };
+
+    // Poll every 500ms
+    pollingRef.current = window.setInterval(pollSession, 500);
+    // Also poll immediately
+    pollSession();
+
+    return () => {
+      console.log("[Polling] Cleanup");
+      if (pollingRef.current) {
+        clearInterval(pollingRef.current);
+        pollingRef.current = null;
+      }
+    };
+  }, [isLoading, streamingSessionId, currentSessionId]);
+
   const refreshMessages = async () => {
     if (!currentSessionId || isRefreshing) return;
 
@@ -126,6 +192,7 @@ export function Chat() {
     setCurrentSessionId(null);
     setVisibleCount(MESSAGES_PER_PAGE);
     setSheetOpen(false);
+    messageCountRef.current = 0;
   };
 
   const selectSession = async (sessionId: string) => {
@@ -140,30 +207,44 @@ export function Chat() {
 
       if (data.success) {
         setMessages(data.messages);
+        messageCountRef.current = data.messages.length;
         setTimeout(scrollToBottom, 200);
       } else {
         setMessages([]);
+        messageCountRef.current = 0;
       }
     } catch (error) {
       console.error("Failed to load session:", error);
       setMessages([]);
+      messageCountRef.current = 0;
     } finally {
       setIsLoading(false);
     }
   };
 
   const sendMessage = () => {
-    // Get value directly from ref to avoid stale state
     const trimmed = inputRef.current?.value?.trim() || "";
     if (!trimmed || isLoading) return;
 
-    const requestId = crypto.randomUUID();
-
-    // Clear both ref and state
+    // Clear input immediately
     if (inputRef.current) inputRef.current.value = "";
     setInput("");
+
+    const requestId = Date.now().toString(36) + Math.random().toString(36).slice(2);
     setCurrentRequestId(requestId);
-    setMessages((prev) => [...prev, { role: "user", content: trimmed }]);
+
+    // Reset streaming session for new sessions
+    if (!currentSessionId) {
+      setStreamingSessionId(null);
+    }
+
+    // Add user message immediately
+    setMessages((prev) => {
+      const newMessages = [...prev, { role: "user", content: trimmed }];
+      // Track message count so polling doesn't overwrite with stale data
+      messageCountRef.current = newMessages.length;
+      return newMessages;
+    });
     setIsLoading(true);
 
     fetch("/api/chat", {
@@ -177,27 +258,20 @@ export function Chat() {
     })
       .then((res) => res.json())
       .then((data) => {
+        // Polling already updates messages, just handle errors
         if (data.aborted) {
           setMessages((prev) => [
             ...prev,
             { role: "system", content: "Request aborted" },
           ]);
-        } else if (data.success) {
-          setMessages((prev) => [
-            ...prev,
-            {
-              role: "assistant",
-              content: data.response,
-              thinking: data.thinking,
-            },
-          ]);
-          fetchSessions();
-        } else {
+        } else if (!data.success) {
           setMessages((prev) => [
             ...prev,
             { role: "assistant", content: `Error: ${data.error}` },
           ]);
         }
+        // Refresh sessions list
+        fetchSessions();
       })
       .catch(() => {
         setMessages((prev) => [
@@ -208,6 +282,7 @@ export function Chat() {
       .finally(() => {
         setIsLoading(false);
         setCurrentRequestId(null);
+        setStreamingSessionId(null);
       });
   };
 
@@ -314,11 +389,11 @@ export function Chat() {
         <Button
           variant="ghost"
           size="icon"
-          className="h-8 w-8"
+          className={`h-8 w-8 ${isLoading ? "text-green-500" : ""}`}
           onClick={refreshMessages}
-          disabled={!currentSessionId || isRefreshing}
+          disabled={!currentSessionId || isRefreshing || isLoading}
         >
-          <RefreshCw className={`h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`} />
+          <RefreshCw className={`h-4 w-4 ${isRefreshing || isLoading ? "animate-spin" : ""}`} />
         </Button>
       </header>
 
@@ -340,7 +415,7 @@ export function Chat() {
           {messages.length > visibleCount && (
             <button
               onClick={() => setVisibleCount((prev) => prev + MESSAGES_PER_PAGE)}
-              className="flex items-center justify-center gap-1.5 rounded-lg bg-muted px-3 py-2 text-xs text-muted-foreground hover:bg-muted/80"
+              className="flex items-center justify-center gap-1.5 rounded-full bg-muted px-4 py-2 text-xs text-muted-foreground hover:bg-muted/80"
             >
               <ChevronUp className="h-3.5 w-3.5" />
               Load {Math.min(MESSAGES_PER_PAGE, messages.length - visibleCount)} older messages
@@ -356,10 +431,10 @@ export function Chat() {
               <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-orange-500/10">
                 <Bot className="h-4 w-4 text-orange-500" />
               </div>
-              <Card className="bg-muted px-3 py-2">
+              <Card className="rounded-2xl bg-muted px-3 py-2">
                 <div className="flex items-center gap-2 text-muted-foreground">
                   <Loader2 className="h-4 w-4 animate-spin" />
-                  <span>Thinking...</span>
+                  <span>Working...</span>
                 </div>
               </Card>
             </div>
@@ -369,41 +444,42 @@ export function Chat() {
       </div>
 
       {/* Input */}
-      <form
-        className="shrink-0 border-t p-2 pb-safe"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (!isLoading) sendMessage();
-        }}
-      >
+      <div className="shrink-0 border-t p-2 pb-safe">
         <div className="flex gap-2">
           <Textarea
             ref={inputRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+              }
+            }}
             placeholder="Type a message..."
             disabled={isLoading}
             rows={2}
-            className="min-h-[48px] flex-1 resize-none"
+            className="min-h-[48px] flex-1 resize-none rounded-2xl"
           />
           {isLoading ? (
             <button
               type="button"
               onClick={abortRequest}
-              className="flex h-[48px] w-[48px] shrink-0 items-center justify-center rounded-md bg-destructive text-destructive-foreground"
+              className="flex h-[48px] w-[48px] shrink-0 items-center justify-center rounded-full bg-destructive text-destructive-foreground active:opacity-80"
             >
               <Square className="h-5 w-5" />
             </button>
           ) : (
             <button
-              type="submit"
-              className={`flex h-[48px] w-[48px] shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground ${!input.trim() ? "opacity-50" : ""}`}
+              type="button"
+              onClick={() => sendMessage()}
+              className={`flex h-[48px] w-[48px] shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground active:opacity-80 ${!input.trim() ? "opacity-50" : ""}`}
             >
               <Send className="h-5 w-5" />
             </button>
           )}
         </div>
-      </form>
+      </div>
     </div>
   );
 }
@@ -441,14 +517,14 @@ const MessageBubble = memo(function MessageBubble({ message }: { message: Messag
         {message.thinking && message.thinking.length > 0 && (
           <Collapsible>
             <CollapsibleTrigger asChild>
-              <button className="flex items-center gap-1.5 rounded-lg bg-purple-500/10 px-2.5 py-1.5 text-xs text-purple-400 hover:bg-purple-500/20">
+              <button className="flex items-center gap-1.5 rounded-full bg-purple-500/10 px-3 py-1.5 text-xs text-purple-400 hover:bg-purple-500/20">
                 <Brain className="h-3.5 w-3.5" />
                 <span>Thinking</span>
                 <ChevronDown className="h-3.5 w-3.5 [[data-state=open]_&]:rotate-180" />
               </button>
             </CollapsibleTrigger>
             <CollapsibleContent>
-              <Card className="mt-1.5 border-purple-500/20 bg-purple-500/5 p-2.5">
+              <Card className="mt-1.5 rounded-xl border-purple-500/20 bg-purple-500/5 p-2.5">
                 <pre className="whitespace-pre-wrap break-words text-xs text-purple-300/80">
                   {message.thinking.join("\n\n")}
                 </pre>
@@ -468,19 +544,23 @@ const MessageBubble = memo(function MessageBubble({ message }: { message: Messag
 
         {/* Content */}
         {message.content && (
-          <Card
-            className={`w-full break-words p-3 ${
-              isUser ? "bg-primary text-primary-foreground" : "bg-muted"
-            }`}
-          >
-            {isUser ? (
-              <p className="whitespace-pre-wrap">{message.content}</p>
-            ) : (
-              <div className="prose prose-sm prose-invert max-w-none [&_*]:break-words">
-                <Markdown content={message.content} />
-              </div>
-            )}
-          </Card>
+          hasCommandTags(message.content) ? (
+            <CommandDisplay content={message.content} />
+          ) : (
+            <Card
+              className={`w-full break-words rounded-2xl p-3 ${
+                isUser ? "bg-primary text-primary-foreground" : "bg-muted"
+              }`}
+            >
+              {isUser ? (
+                <p className="whitespace-pre-wrap">{message.content}</p>
+              ) : (
+                <div className="prose prose-sm prose-invert max-w-none [&_*]:break-words">
+                  <Markdown content={message.content} />
+                </div>
+              )}
+            </Card>
+          )
         )}
       </div>
     </div>
