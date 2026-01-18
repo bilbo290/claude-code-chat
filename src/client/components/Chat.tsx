@@ -147,11 +147,14 @@ export function Chat() {
   };
 
   const sendMessage = () => {
-    const trimmed = input.trim();
+    // Get value directly from ref to avoid stale state
+    const trimmed = inputRef.current?.value?.trim() || "";
     if (!trimmed || isLoading) return;
 
     const requestId = crypto.randomUUID();
 
+    // Clear both ref and state
+    if (inputRef.current) inputRef.current.value = "";
     setInput("");
     setCurrentRequestId(requestId);
     setMessages((prev) => [...prev, { role: "user", content: trimmed }]);
@@ -213,13 +216,6 @@ export function Chat() {
       });
     } catch (error) {
       console.error("Failed to abort:", error);
-    }
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      sendMessage();
     }
   };
 
@@ -356,39 +352,41 @@ export function Chat() {
       </div>
 
       {/* Input */}
-      <div className="shrink-0 border-t p-2 pb-safe">
+      <form
+        className="shrink-0 border-t p-2 pb-safe"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!isLoading) sendMessage();
+        }}
+      >
         <div className="flex gap-2">
           <Textarea
             ref={inputRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
             placeholder="Type a message..."
             disabled={isLoading}
             rows={2}
             className="min-h-[48px] flex-1 resize-none"
           />
           {isLoading ? (
-            <Button
+            <button
+              type="button"
               onClick={abortRequest}
-              variant="destructive"
-              size="icon"
-              className="h-[48px] w-[48px] shrink-0"
+              className="flex h-[48px] w-[48px] shrink-0 items-center justify-center rounded-md bg-destructive text-destructive-foreground"
             >
               <Square className="h-5 w-5" />
-            </Button>
+            </button>
           ) : (
-            <Button
-              onClick={sendMessage}
-              disabled={!input.trim()}
-              size="icon"
-              className="h-[48px] w-[48px] shrink-0"
+            <button
+              type="submit"
+              className={`flex h-[48px] w-[48px] shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground ${!input.trim() ? "opacity-50" : ""}`}
             >
               <Send className="h-5 w-5" />
-            </Button>
+            </button>
           )}
         </div>
-      </div>
+      </form>
     </div>
   );
 }
