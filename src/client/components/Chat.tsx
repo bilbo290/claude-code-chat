@@ -121,24 +121,12 @@ export function Chat() {
 
     const pollSession = async () => {
       try {
-        let sessionId = streamingSessionId || currentSessionId;
+        const sessionId = streamingSessionId || currentSessionId;
         console.log("[Polling] Poll tick, sessionId:", sessionId);
 
-        // If no session ID, try to find the newest one
+        // If no session ID, we're creating a new session - don't poll yet
         if (!sessionId) {
-          const sessionsRes = await fetch("/api/sessions");
-          const sessionsData = await sessionsRes.json();
-          console.log("[Polling] Fetched sessions:", sessionsData.sessions?.length);
-          if (sessionsData.success && sessionsData.sessions.length > 0) {
-            sessionId = sessionsData.sessions[0].id;
-            console.log("[Polling] Using newest session:", sessionId);
-            setStreamingSessionId(sessionId);
-            setCurrentSessionId(sessionId);
-          }
-        }
-
-        if (!sessionId) {
-          console.log("[Polling] No session ID yet");
+          console.log("[Polling] No session ID yet (new session being created)");
           return;
         }
 
@@ -252,7 +240,7 @@ export function Chat() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         message: trimmed,
-        sessionId: currentSessionId,
+        ...(currentSessionId && { sessionId: currentSessionId }),
         requestId,
       }),
     })
@@ -267,11 +255,28 @@ export function Chat() {
         } else if (!data.success) {
           setMessages((prev) => [
             ...prev,
-            { role: "assistant", content: `Error: ${data.error}` },
+            { role: "assistant", content: `Error: ${data.error || "Unknown error"}` },
           ]);
         }
-        // Refresh sessions list
-        fetchSessions();
+        // Refresh sessions list and set new session if we created one
+        fetchSessions().then(async () => {
+          if (!currentSessionId && data.success) {
+            // New session was created - fetch sessions to get the new ID
+            const sessionsRes = await fetch("/api/sessions");
+            const sessionsData = await sessionsRes.json();
+            if (sessionsData.success && sessionsData.sessions.length > 0) {
+              const newSessionId = sessionsData.sessions[0].id;
+              setCurrentSessionId(newSessionId);
+              // Load the new session messages
+              const sessionRes = await fetch(`/api/sessions/${newSessionId}`);
+              const sessionData = await sessionRes.json();
+              if (sessionData.success) {
+                setMessages(sessionData.messages);
+                messageCountRef.current = sessionData.messages.length;
+              }
+            }
+          }
+        });
       })
       .catch(() => {
         setMessages((prev) => [

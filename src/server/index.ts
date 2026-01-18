@@ -73,9 +73,8 @@ const app = new Elysia()
 
         if (sessionId) {
           args.push("--resume", sessionId);
-        } else {
-          args.push("--continue");
         }
+        // No flag = new session (don't use --continue as it resumes the last session)
 
         const proc = Bun.spawn(["claude", ...args], {
           cwd: CLAUDE_CWD,
@@ -109,23 +108,39 @@ const app = new Elysia()
         }
 
         if (proc.exitCode !== 0) {
+          console.error("Claude failed with exit code:", proc.exitCode);
+          console.error("stderr:", stderr);
+          console.error("stdout:", output);
           return {
             success: false,
-            error: stderr || "Claude command failed",
+            error: stderr || output || `Claude command failed with exit code ${proc.exitCode}`,
           };
         }
 
         const { thinking, response } = parseStreamOutput(output);
+
+        console.log("Claude succeeded, response length:", response.length);
+        if (!response) {
+          console.log("Empty response, raw output:", output.slice(0, 500));
+        }
 
         return {
           success: true,
           thinking,
           response,
         };
-      } catch (error) {
+      } catch (error: unknown) {
+        console.error("Chat error type:", typeof error);
+        console.error("Chat error:", error);
+        console.error("Chat error JSON:", JSON.stringify(error, null, 2));
+        const errorMsg = error instanceof Error
+          ? error.message
+          : typeof error === 'string'
+            ? error
+            : JSON.stringify(error) || "Unknown error";
         return {
           success: false,
-          error: error instanceof Error ? error.message : "Unknown error",
+          error: errorMsg,
         };
       }
     },
