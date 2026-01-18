@@ -1,15 +1,28 @@
-# cc-line
+# Claude Code Chat
 
-To install dependencies:
+A chat interface for Claude API.
+
+## Disclaimer
+
+This project was **vibecoded** - built quickly as a prototype/experiment. Use at your own risk.
+
+**No authentication is currently implemented.** This is intended for use on your local network only. Do not expose this to the public internet without adding proper authentication.
+
+Authentication will be added in a future update.
+
+## Getting Started
 
 ```bash
 bun install
+bun run dev
 ```
 
-To run:
+By default, Claude will work in the current directory. To have Claude access a different folder, set the `CLAUDE_CWD` environment variable:
 
 ```bash
-bun run index.ts
+CLAUDE_CWD=/path/to/your/project bun run dev
 ```
 
-This project was created using `bun init` in bun v1.3.5. [Bun](https://bun.com) is a fast all-in-one JavaScript runtime.
+## License
+
+MIT
