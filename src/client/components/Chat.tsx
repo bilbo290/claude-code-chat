@@ -22,6 +22,7 @@ import {
   User,
   Loader2,
   ChevronDown,
+  ChevronUp,
   Brain,
   MessageSquare,
   Plus,
@@ -31,6 +32,8 @@ import {
   Menu,
   RefreshCw,
 } from "lucide-react";
+
+const MESSAGES_PER_PAGE = 20;
 
 interface ToolUse {
   name: string;
@@ -69,6 +72,7 @@ export function Chat() {
   const [currentRequestId, setCurrentRequestId] = useState<string | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(MESSAGES_PER_PAGE);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -120,6 +124,7 @@ export function Chat() {
   const startNewSession = () => {
     setMessages([]);
     setCurrentSessionId(null);
+    setVisibleCount(MESSAGES_PER_PAGE);
     setSheetOpen(false);
   };
 
@@ -127,6 +132,7 @@ export function Chat() {
     setCurrentSessionId(sessionId);
     setIsLoading(true);
     setSheetOpen(false);
+    setVisibleCount(MESSAGES_PER_PAGE);
 
     try {
       const res = await fetch(`/api/sessions/${sessionId}`);
@@ -330,8 +336,19 @@ export function Chat() {
             </div>
           )}
 
-          {messages.map((msg, i) => (
-            <MessageBubble key={i} message={msg} />
+          {/* Load more button */}
+          {messages.length > visibleCount && (
+            <button
+              onClick={() => setVisibleCount((prev) => prev + MESSAGES_PER_PAGE)}
+              className="flex items-center justify-center gap-1.5 rounded-lg bg-muted px-3 py-2 text-xs text-muted-foreground hover:bg-muted/80"
+            >
+              <ChevronUp className="h-3.5 w-3.5" />
+              Load {Math.min(MESSAGES_PER_PAGE, messages.length - visibleCount)} older messages
+            </button>
+          )}
+
+          {messages.slice(-visibleCount).map((msg, i) => (
+            <MessageBubble key={messages.length - visibleCount + i} message={msg} />
           ))}
 
           {isLoading && (
