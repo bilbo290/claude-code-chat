@@ -8,6 +8,28 @@ const DIST_DIR = path.join(import.meta.dir, "../../dist");
 // Track running processes for abort functionality
 const runningProcesses = new Map<string, { proc: ReturnType<typeof Bun.spawn>; aborted: boolean }>();
 
+// Permission request handling
+interface PermissionRequest {
+  id: string;
+  sessionId: string;
+  toolName: string;
+  toolInput: Record<string, unknown>;
+  timestamp: number;
+  resolve: (decision: PermissionDecision) => void;
+}
+
+interface PermissionDecision {
+  hookSpecificOutput: {
+    hookEventName: "PermissionRequest";
+    decision: {
+      behavior: "allow" | "deny";
+      message?: string;
+    };
+  };
+}
+
+const pendingPermissions = new Map<string, PermissionRequest>();
+
 interface StreamMessage {
   type: string;
   message?: {
@@ -58,14 +80,14 @@ const app = new Elysia()
   .post(
     "/api/chat",
     async ({ body }) => {
-      const { message, sessionId, requestId } = body;
+      const { message, sessionId, requestId, permissionMode } = body;
 
       try {
         const args = [
           "-p",
           message,
           "--permission-mode",
-          "acceptEdits",
+          permissionMode || "default",
           "--output-format",
           "stream-json",
           "--verbose",
@@ -149,6 +171,7 @@ const app = new Elysia()
         message: t.String(),
         sessionId: t.Optional(t.String()),
         requestId: t.Optional(t.String()),
+        permissionMode: t.Optional(t.String()),
       }),
     }
   )
@@ -179,13 +202,47 @@ const app = new Elysia()
       const sessionsDir = `${process.env.HOME}/.claude/projects/${encodedPath}`;
 
       const glob = new Bun.Glob("*.jsonl");
-      const sessions: { id: string; modified: number }[] = [];
+      const sessions: { id: string; modified: number; preview: string }[] = [];
 
       for await (const file of glob.scan({ cwd: sessionsDir })) {
-        const stat = await Bun.file(`${sessionsDir}/${file}`).stat();
+        const filePath = `${sessionsDir}/${file}`;
+        const stat = await Bun.file(filePath).stat();
+
+        // Get first user message as preview
+        let preview = "";
+        try {
+          const content = await Bun.file(filePath).text();
+          const lines = content.trim().split("\n");
+          for (const line of lines) {
+            try {
+              const parsed = JSON.parse(line);
+              if (parsed.type === "user" && parsed.message?.content) {
+                const msgContent = parsed.message.content;
+                if (typeof msgContent === "string" && !msgContent.startsWith("<")) {
+                  preview = msgContent.slice(0, 100);
+                  break;
+                } else if (Array.isArray(msgContent)) {
+                  for (const block of msgContent) {
+                    if (block.type === "text" && block.text && !block.text.startsWith("<")) {
+                      preview = block.text.slice(0, 100);
+                      break;
+                    }
+                  }
+                  if (preview) break;
+                }
+              }
+            } catch {
+              // Skip invalid lines
+            }
+          }
+        } catch {
+          // Couldn't read file
+        }
+
         sessions.push({
           id: file.replace(".jsonl", ""),
           modified: stat?.mtime?.getTime() || 0,
+          preview: preview || "New conversation",
         });
       }
 
@@ -295,6 +352,229 @@ const app = new Elysia()
       };
     }
   })
+  // Permission request from hook script (long-polling)
+  .post(
+    "/api/permission-request",
+    async ({ body }) => {
+      const { tool_name, tool_input, tool_use_id, session_id, permission_mode } = body;
+      const id = tool_use_id || crypto.randomUUID();
+
+      console.log(`[Permission] Request for ${tool_name} (mode: ${permission_mode}):`, tool_input);
+
+      // Auto-approve in bypass mode
+      if (permission_mode === "bypassPermissions") {
+        console.log(`[Permission] Auto-approving (bypass mode)`);
+        return {
+          hookSpecificOutput: {
+            hookEventName: "PreToolUse",
+            permissionDecision: "allow",
+            permissionDecisionReason: "Bypass mode - auto-approved",
+          },
+        };
+      }
+
+      // Create a promise that will be resolved when user responds
+      const decision = await new Promise<PermissionDecision>((resolve) => {
+        pendingPermissions.set(id, {
+          id,
+          sessionId: session_id || "",
+          toolName: tool_name,
+          toolInput: tool_input,
+          timestamp: Date.now(),
+          resolve,
+        });
+
+        // Timeout after 5 minutes - deny by default
+        setTimeout(() => {
+          if (pendingPermissions.has(id)) {
+            pendingPermissions.delete(id);
+            resolve({
+              hookSpecificOutput: {
+                hookEventName: "PreToolUse",
+                permissionDecision: "deny",
+                permissionDecisionReason: "Permission request timed out",
+              },
+            } as unknown as PermissionDecision);
+          }
+        }, 300000);
+      });
+
+      return decision;
+    },
+    {
+      body: t.Object({
+        tool_name: t.String(),
+        tool_input: t.Any(),
+        tool_use_id: t.Optional(t.String()),
+        session_id: t.Optional(t.String()),
+        cwd: t.Optional(t.String()),
+        permission_mode: t.Optional(t.String()),
+        hook_event_name: t.Optional(t.String()),
+        transcript_path: t.Optional(t.String()),
+      }),
+    }
+  )
+  // Get pending permission requests (for frontend polling)
+  .get("/api/permission-pending", () => {
+    const pending = Array.from(pendingPermissions.values()).map((p) => ({
+      id: p.id,
+      sessionId: p.sessionId,
+      toolName: p.toolName,
+      toolInput: p.toolInput,
+      timestamp: p.timestamp,
+    }));
+    return { success: true, pending };
+  })
+  // Respond to a permission request
+  .post(
+    "/api/permission-respond",
+    async ({ body }) => {
+      const { id, allow } = body;
+
+      const request = pendingPermissions.get(id);
+      if (!request) {
+        return { success: false, error: "Permission request not found or expired" };
+      }
+
+      console.log(`[Permission] Response for ${request.toolName}: ${allow ? "allow" : "deny"}`);
+
+      pendingPermissions.delete(id);
+
+      // PreToolUse hook format with hookSpecificOutput wrapper
+      request.resolve({
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          permissionDecision: allow ? "allow" : "deny",
+          permissionDecisionReason: allow ? "User approved" : "User denied permission",
+        },
+      } as unknown as PermissionDecision);
+
+      return { success: true };
+    },
+    {
+      body: t.Object({
+        id: t.String(),
+        allow: t.Boolean(),
+      }),
+    }
+  )
+  // Check if permission hook is configured
+  .get("/api/hook-status", async () => {
+    const hookScriptPath = path.join(import.meta.dir, "../../scripts/permission-hook.sh");
+    const globalSettingsPath = `${process.env.HOME}/.claude/settings.json`;
+    const projectSettingsPath = path.join(CLAUDE_CWD, ".claude/settings.json");
+
+    const checkSettings = async (filePath: string): Promise<boolean> => {
+      try {
+        const content = await Bun.file(filePath).text();
+        const settings = JSON.parse(content);
+        // Check for PreToolUse hook (primary) or PermissionRequest (legacy)
+        const hooks = settings?.hooks?.PreToolUse || settings?.hooks?.PermissionRequest;
+        if (!Array.isArray(hooks)) return false;
+        // Check if any hook points to our script
+        return hooks.some((h: { hooks?: Array<{ command?: string }> }) =>
+          h.hooks?.some((hook) => hook.command?.includes("permission-hook.sh"))
+        );
+      } catch {
+        return false;
+      }
+    };
+
+    const globalConfigured = await checkSettings(globalSettingsPath);
+    const projectConfigured = await checkSettings(projectSettingsPath);
+
+    return {
+      success: true,
+      configured: globalConfigured || projectConfigured,
+      globalConfigured,
+      projectConfigured,
+      hookScriptPath,
+      globalSettingsPath,
+      projectSettingsPath,
+      cwd: CLAUDE_CWD,
+    };
+  })
+  // Configure the permission hook
+  .post(
+    "/api/hook-configure",
+    async ({ body }) => {
+      const { location } = body; // "global" or "project"
+      const hookScriptPath = path.join(import.meta.dir, "../../scripts/permission-hook.sh");
+
+      const settingsPath =
+        location === "global"
+          ? `${process.env.HOME}/.claude/settings.json`
+          : path.join(CLAUDE_CWD, ".claude/settings.json");
+
+      const settingsDir = path.dirname(settingsPath);
+
+      try {
+        // Ensure directory exists
+        await Bun.$`mkdir -p ${settingsDir}`.quiet();
+
+        // Read existing settings or create new
+        let settings: Record<string, unknown> = {};
+        try {
+          const content = await Bun.file(settingsPath).text();
+          settings = JSON.parse(content);
+        } catch {
+          // File doesn't exist or is invalid, start fresh
+        }
+
+        // Add our hook configuration
+        const hookConfig = {
+          matcher: "",
+          hooks: [
+            {
+              type: "command",
+              command: hookScriptPath,
+            },
+          ],
+        };
+
+        if (!settings.hooks) {
+          settings.hooks = {};
+        }
+        const hooks = settings.hooks as Record<string, unknown>;
+
+        if (!hooks.PreToolUse) {
+          hooks.PreToolUse = [];
+        }
+        const permHooks = hooks.PreToolUse as Array<unknown>;
+
+        // Check if our hook is already there
+        const alreadyConfigured = permHooks.some(
+          (h: unknown) =>
+            (h as { hooks?: Array<{ command?: string }> }).hooks?.some((hook) =>
+              hook.command?.includes("permission-hook.sh")
+            )
+        );
+
+        if (!alreadyConfigured) {
+          permHooks.push(hookConfig);
+        }
+
+        // Write settings
+        await Bun.write(settingsPath, JSON.stringify(settings, null, 2));
+
+        return {
+          success: true,
+          message: `Hook configured in ${location} settings`,
+          settingsPath,
+        };
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : "Failed to configure hook",
+        };
+      }
+    },
+    {
+      body: t.Object({
+        location: t.Union([t.Literal("global"), t.Literal("project")]),
+      }),
+    }
+  )
   .get("/assets/*", ({ params }) => {
     const filePath = path.join(DIST_DIR, "assets", params["*"]);
     return Bun.file(filePath);

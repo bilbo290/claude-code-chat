@@ -1,7 +1,8 @@
-import { useState, useRef, useEffect, memo } from "react";
+import { useState, useRef, useEffect, memo, useCallback } from "react";
 import { Markdown } from "./Markdown";
 import { ToolDisplay } from "./ToolDisplay";
 import { CommandDisplay, hasCommandTags } from "./CommandDisplay";
+import { SetupBanner } from "./SetupWizard";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Card } from "@/components/ui/card";
@@ -18,6 +19,11 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
   Send,
   Bot,
   User,
@@ -32,6 +38,12 @@ import {
   Square,
   Menu,
   RefreshCw,
+  Shield,
+  Check,
+  X,
+  FileText,
+  ListChecks,
+  HelpCircle,
 } from "lucide-react";
 
 const MESSAGES_PER_PAGE = 20;
@@ -61,6 +73,25 @@ interface Message {
 interface Session {
   id: string;
   modified: number;
+  preview: string;
+}
+
+interface PendingPermission {
+  id: string;
+  sessionId: string;
+  toolName: string;
+  toolInput: Record<string, unknown>;
+  timestamp: number;
+}
+
+interface HookStatus {
+  configured: boolean;
+  globalConfigured: boolean;
+  projectConfigured: boolean;
+  hookScriptPath: string;
+  globalSettingsPath: string;
+  projectSettingsPath: string;
+  cwd: string;
 }
 
 export function Chat() {
@@ -75,9 +106,18 @@ export function Chat() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [visibleCount, setVisibleCount] = useState(MESSAGES_PER_PAGE);
   const [streamingSessionId, setStreamingSessionId] = useState<string | null>(null);
+  const [pendingPermissions, setPendingPermissions] = useState<PendingPermission[]>([]);
+  const [hookStatus, setHookStatus] = useState<HookStatus | null>(null);
+  const [selectedModel, setSelectedModel] = useState<"opus" | "sonnet" | "haiku">("sonnet");
+  const [modelPopoverOpen, setModelPopoverOpen] = useState(false);
+  const [permissionMode, setPermissionMode] = useState<"default" | "acceptEdits" | "plan" | "bypassPermissions">("default");
+  const [permissionPopoverOpen, setPermissionPopoverOpen] = useState(false);
+  const [questionAnswers, setQuestionAnswers] = useState<Record<string, Record<number, string>>>({});
+  const respondedPermissionsRef = useRef<Set<string>>(new Set());
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const pollingRef = useRef<number | null>(null);
+  const permissionPollingRef = useRef<number | null>(null);
   const messageCountRef = useRef<number>(0);
 
   const fetchSessions = async () => {
@@ -93,9 +133,125 @@ export function Chat() {
     }
   };
 
+  const fetchHookStatus = useCallback(async () => {
+    try {
+      const res = await fetch("/api/hook-status");
+      const data = await res.json();
+      if (data.success) {
+        setHookStatus(data);
+      }
+    } catch (error) {
+      console.error("Failed to fetch hook status:", error);
+    }
+  }, []);
+
   useEffect(() => {
     fetchSessions();
-  }, []);
+    fetchHookStatus();
+  }, [fetchHookStatus]);
+
+  // Poll for pending permission requests
+  useEffect(() => {
+    const pollPermissions = async () => {
+      try {
+        const res = await fetch("/api/permission-pending");
+        const data = await res.json();
+        if (data.success) {
+          // Filter out permissions we've already responded to
+          // AND filter to only show permissions for current session (or no session for new chats)
+          const filtered = data.pending.filter((p: PendingPermission) => {
+            if (respondedPermissionsRef.current.has(p.id)) return false;
+            // Show if session matches, or if we have no session yet (new chat)
+            if (!currentSessionId) return true;
+            return p.sessionId === currentSessionId;
+          });
+          setPendingPermissions(filtered);
+        }
+      } catch (err) {
+        console.error("Failed to poll permissions:", err);
+      }
+    };
+
+    // Poll every 3 seconds
+    permissionPollingRef.current = window.setInterval(pollPermissions, 3000);
+    pollPermissions();
+
+    return () => {
+      if (permissionPollingRef.current) {
+        clearInterval(permissionPollingRef.current);
+        permissionPollingRef.current = null;
+      }
+    };
+  }, [currentSessionId]);
+
+  const respondToPermission = async (id: string, allow: boolean) => {
+    // Mark as responded immediately to prevent re-showing
+    respondedPermissionsRef.current.add(id);
+
+    // Remove from local state immediately
+    setPendingPermissions((prev) => prev.filter((p) => p.id !== id));
+
+    // Clean up any stored answers for this question
+    setQuestionAnswers((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+
+    try {
+      await fetch("/api/permission-respond", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, allow }),
+      });
+    } catch (err) {
+      console.error("Failed to respond to permission:", err);
+    }
+
+    // Clear from responded set after 10 seconds (cleanup)
+    setTimeout(() => {
+      respondedPermissionsRef.current.delete(id);
+    }, 10000);
+  };
+
+  const submitQuestionAnswer = async (permId: string, questions: Array<{ question: string }>) => {
+    const answers = questionAnswers[permId] || {};
+    // Build answer string from selected options
+    const answerParts: string[] = [];
+    questions.forEach((q, idx) => {
+      if (answers[idx]) {
+        answerParts.push(answers[idx]);
+      }
+    });
+
+    if (answerParts.length === 0) {
+      return; // No answers selected
+    }
+
+    // Allow the question tool
+    await respondToPermission(permId, true);
+
+    // Send the answer as a user message
+    const answerText = answerParts.join("\n");
+    if (inputRef.current) {
+      inputRef.current.value = answerText;
+      setInput(answerText);
+    }
+    // Auto-send after a short delay
+    setTimeout(() => {
+      sendMessage();
+    }, 100);
+  };
+
+  const selectQuestionOption = (permId: string, questionIdx: number, optionLabel: string) => {
+    setQuestionAnswers((prev) => ({
+      ...prev,
+      [permId]: {
+        ...(prev[permId] || {}),
+        [questionIdx]: optionLabel,
+      },
+    }));
+  };
 
   const scrollToBottom = () => {
     setTimeout(() => {
@@ -103,18 +259,39 @@ export function Chat() {
     }, 100);
   };
 
+  // Track previous counts to detect new items
+  const prevPermissionCountRef = useRef(0);
+  const prevMessageCountRef = useRef(0);
+
   useEffect(() => {
-    scrollToBottom();
+    // Scroll when new messages are added
+    if (messages.length > prevMessageCountRef.current) {
+      scrollToBottom();
+    }
+    prevMessageCountRef.current = messages.length;
   }, [messages]);
 
-  // Poll for streaming updates while loading
   useEffect(() => {
-    if (!isLoading) {
+    // Only scroll when new permission requests appear
+    if (pendingPermissions.length > prevPermissionCountRef.current) {
+      scrollToBottom();
+    }
+    prevPermissionCountRef.current = pendingPermissions.length;
+  }, [pendingPermissions]);
+
+  // Poll for streaming updates while loading (but not while waiting for permission)
+  useEffect(() => {
+    if (!isLoading || pendingPermissions.length > 0) {
       if (pollingRef.current) {
         clearInterval(pollingRef.current);
         pollingRef.current = null;
       }
-      return;
+      if (!isLoading) return;
+      // If waiting for permission, don't poll but don't return early
+      if (pendingPermissions.length > 0) {
+        console.log("[Polling] Paused - waiting for permission approval");
+        return;
+      }
     }
 
     console.log("[Polling] Starting polling, isLoading:", isLoading);
@@ -143,8 +320,8 @@ export function Chat() {
       }
     };
 
-    // Poll every 500ms
-    pollingRef.current = window.setInterval(pollSession, 500);
+    // Poll every 3 seconds
+    pollingRef.current = window.setInterval(pollSession, 3000);
     // Also poll immediately
     pollSession();
 
@@ -155,7 +332,7 @@ export function Chat() {
         pollingRef.current = null;
       }
     };
-  }, [isLoading, streamingSessionId, currentSessionId]);
+  }, [isLoading, streamingSessionId, currentSessionId, pendingPermissions.length]);
 
   const refreshMessages = async () => {
     if (!currentSessionId || isRefreshing) return;
@@ -181,6 +358,10 @@ export function Chat() {
     setVisibleCount(MESSAGES_PER_PAGE);
     setSheetOpen(false);
     messageCountRef.current = 0;
+    // Clear pending permissions from old session
+    setPendingPermissions([]);
+    setQuestionAnswers({});
+    respondedPermissionsRef.current.clear();
   };
 
   const selectSession = async (sessionId: string) => {
@@ -188,6 +369,10 @@ export function Chat() {
     setIsLoading(true);
     setSheetOpen(false);
     setVisibleCount(MESSAGES_PER_PAGE);
+    // Clear pending permissions from old session
+    setPendingPermissions([]);
+    setQuestionAnswers({});
+    respondedPermissionsRef.current.clear();
 
     try {
       const res = await fetch(`/api/sessions/${sessionId}`);
@@ -234,6 +419,7 @@ export function Chat() {
       return newMessages;
     });
     setIsLoading(true);
+    scrollToBottom();
 
     fetch("/api/chat", {
       method: "POST",
@@ -242,6 +428,7 @@ export function Chat() {
         message: trimmed,
         ...(currentSessionId && { sessionId: currentSessionId }),
         requestId,
+        permissionMode,
       }),
     })
       .then((res) => res.json())
@@ -354,17 +541,17 @@ export function Chat() {
                   <button
                     key={session.id}
                     onClick={() => selectSession(session.id)}
-                    className={`flex w-full items-center justify-between px-4 py-3 text-left text-sm hover:bg-muted ${
+                    className={`flex w-full flex-col gap-1 px-4 py-3 text-left hover:bg-muted ${
                       currentSessionId === session.id ? "bg-muted" : ""
                     }`}
                   >
-                    <span className="flex items-center gap-2 truncate">
+                    <span className="flex items-center gap-2">
                       <MessageSquare className="h-4 w-4 shrink-0 text-muted-foreground" />
-                      <span className="truncate font-mono text-xs">
-                        {session.id.slice(0, 8)}...
+                      <span className="flex-1 truncate text-sm">
+                        {session.preview}
                       </span>
                     </span>
-                    <span className="shrink-0 text-xs text-muted-foreground">
+                    <span className="pl-6 text-xs text-muted-foreground">
                       {formatDate(session.modified)}
                     </span>
                   </button>
@@ -401,6 +588,10 @@ export function Chat() {
           <RefreshCw className={`h-4 w-4 ${isRefreshing || isLoading ? "animate-spin" : ""}`} />
         </Button>
       </header>
+
+      {/* Setup Banner */}
+      <SetupBanner hookStatus={hookStatus} onConfigured={fetchHookStatus} />
+
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto">
@@ -444,45 +635,424 @@ export function Chat() {
               </Card>
             </div>
           )}
+
+          {/* Permission Requests - Inline */}
+          {pendingPermissions.map((perm) => {
+            // Check if this is a plan approval (ExitPlanMode)
+            const isPlanApproval = perm.toolName === "ExitPlanMode";
+            const isQuestion = perm.toolName === "AskUserQuestion";
+            const allowedPrompts = perm.toolInput.allowedPrompts as Array<{ tool: string; prompt: string }> | undefined;
+            const questions = perm.toolInput.questions as Array<{
+              question: string;
+              header: string;
+              options: Array<{ label: string; description: string }>;
+              multiSelect?: boolean;
+            }> | undefined;
+
+            // Question UI
+            if (isQuestion && questions) {
+              const selectedAnswers = questionAnswers[perm.id] || {};
+              const allAnswered = questions.every((_, idx) => selectedAnswers[idx]);
+
+              return (
+                <div key={perm.id} className="flex items-start gap-2">
+                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-purple-500/20">
+                    <HelpCircle className="h-4 w-4 text-purple-400" />
+                  </div>
+                  <Card className="flex-1 rounded-2xl border-purple-500/30 bg-purple-500/10 p-4">
+                    <div className="mb-3 flex items-center gap-2">
+                      <HelpCircle className="h-5 w-5 text-purple-400" />
+                      <span className="text-lg font-medium text-purple-200">
+                        Claude needs clarification
+                      </span>
+                    </div>
+                    {questions.map((q, qIdx) => (
+                      <div key={qIdx} className="mb-4">
+                        <p className="mb-3 text-sm text-purple-100">
+                          {q.question}
+                        </p>
+                        <div className="space-y-2">
+                          {q.options.map((opt, optIdx) => {
+                            const isSelected = selectedAnswers[qIdx] === opt.label;
+                            return (
+                              <button
+                                key={optIdx}
+                                type="button"
+                                onClick={() => selectQuestionOption(perm.id, qIdx, opt.label)}
+                                className={`w-full rounded-lg px-3 py-2 text-left transition-all ${
+                                  isSelected
+                                    ? "bg-purple-500/40 ring-2 ring-purple-400"
+                                    : "bg-black/20 hover:bg-purple-500/20"
+                                }`}
+                              >
+                                <div className="flex items-center gap-2">
+                                  <div className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${
+                                    isSelected
+                                      ? "border-purple-400 bg-purple-400"
+                                      : "border-purple-400/50"
+                                  }`}>
+                                    {isSelected && <Check className="h-3 w-3 text-white" />}
+                                  </div>
+                                  <span className="font-medium text-purple-200">{opt.label}</span>
+                                </div>
+                                {opt.description && (
+                                  <p className="mt-1 pl-6 text-xs text-purple-100/60">{opt.description}</p>
+                                )}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ))}
+                    <div className="flex gap-2">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-9 flex-1 bg-red-500/20 text-red-400 hover:bg-red-500/30 hover:text-red-300"
+                        onClick={() => respondToPermission(perm.id, false)}
+                      >
+                        <X className="mr-1.5 h-4 w-4" />
+                        Skip
+                      </Button>
+                      <Button
+                        size="sm"
+                        className="h-9 flex-1 bg-purple-600 text-white hover:bg-purple-500 disabled:opacity-50"
+                        disabled={!allAnswered}
+                        onClick={() => submitQuestionAnswer(perm.id, questions)}
+                      >
+                        <Send className="mr-1.5 h-4 w-4" />
+                        Submit Answer
+                      </Button>
+                    </div>
+                  </Card>
+                </div>
+              );
+            }
+
+            if (isPlanApproval) {
+              return (
+                <div key={perm.id} className="flex items-start gap-2">
+                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-blue-500/20">
+                    <ListChecks className="h-4 w-4 text-blue-400" />
+                  </div>
+                  <Card className="flex-1 rounded-2xl border-blue-500/30 bg-blue-500/10 p-4">
+                    <div className="mb-3 flex items-center gap-2">
+                      <FileText className="h-5 w-5 text-blue-400" />
+                      <span className="text-lg font-medium text-blue-200">
+                        Plan Ready for Approval
+                      </span>
+                    </div>
+                    <p className="mb-3 text-sm text-blue-100/70">
+                      Claude has created an implementation plan. Review and approve to proceed with execution.
+                    </p>
+                    {allowedPrompts && allowedPrompts.length > 0 && (
+                      <div className="mb-4">
+                        <p className="mb-2 text-xs font-medium uppercase tracking-wide text-blue-300/70">
+                          Requested Permissions
+                        </p>
+                        <div className="space-y-1.5">
+                          {allowedPrompts.map((prompt, idx) => (
+                            <div
+                              key={idx}
+                              className="flex items-center gap-2 rounded-lg bg-black/20 px-3 py-2"
+                            >
+                              <Terminal className="h-3.5 w-3.5 text-blue-400" />
+                              <span className="text-sm text-blue-100">{prompt.prompt}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    <div className="flex gap-2">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-9 flex-1 bg-red-500/20 text-red-400 hover:bg-red-500/30 hover:text-red-300"
+                        onClick={() => respondToPermission(perm.id, false)}
+                      >
+                        <X className="mr-1.5 h-4 w-4" />
+                        Reject Plan
+                      </Button>
+                      <Button
+                        size="sm"
+                        className="h-9 flex-1 bg-blue-600 text-white hover:bg-blue-500"
+                        onClick={() => respondToPermission(perm.id, true)}
+                      >
+                        <Check className="mr-1.5 h-4 w-4" />
+                        Approve Plan
+                      </Button>
+                    </div>
+                  </Card>
+                </div>
+              );
+            }
+
+            // Regular permission request
+            return (
+              <div key={perm.id} className="flex items-start gap-2">
+                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-amber-500/20">
+                  <Shield className="h-4 w-4 text-amber-400" />
+                </div>
+                <Card className="flex-1 rounded-2xl border-amber-500/30 bg-amber-500/10 p-3">
+                  <div className="mb-2 flex items-center gap-2">
+                    <span className="font-medium text-amber-200">
+                      Permission Request
+                    </span>
+                    <span className="rounded bg-amber-500/20 px-1.5 py-0.5 text-xs text-amber-300">
+                      {perm.toolName}
+                    </span>
+                  </div>
+                  <div className="mb-3 rounded-lg bg-black/20 p-2 font-mono text-xs text-amber-100/80">
+                    {perm.toolName === "Bash" && perm.toolInput.command
+                      ? String(perm.toolInput.command)
+                      : perm.toolName === "Edit" || perm.toolName === "Write"
+                        ? String(perm.toolInput.file_path || "")
+                        : perm.toolName === "Read"
+                          ? String(perm.toolInput.file_path || "")
+                          : JSON.stringify(perm.toolInput, null, 2)}
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-8 flex-1 bg-red-500/20 text-red-400 hover:bg-red-500/30 hover:text-red-300"
+                      onClick={() => respondToPermission(perm.id, false)}
+                    >
+                      <X className="mr-1.5 h-4 w-4" />
+                      Deny
+                    </Button>
+                    <Button
+                      size="sm"
+                      className="h-8 flex-1 bg-green-600 text-white hover:bg-green-500"
+                      onClick={() => respondToPermission(perm.id, true)}
+                    >
+                      <Check className="mr-1.5 h-4 w-4" />
+                      Allow
+                    </Button>
+                  </div>
+                </Card>
+              </div>
+            );
+          })}
+
           <div ref={bottomRef} />
         </div>
       </div>
 
       {/* Input */}
-      <div className="shrink-0 border-t p-2 pb-safe">
-        <div className="flex gap-2">
-          <Textarea
-            ref={inputRef}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                sendMessage();
-              }
-            }}
-            placeholder="Type a message..."
-            disabled={isLoading}
-            rows={2}
-            className="min-h-[48px] flex-1 resize-none rounded-2xl"
-          />
-          {isLoading ? (
-            <button
-              type="button"
-              onClick={abortRequest}
-              className="flex h-[48px] w-[48px] shrink-0 items-center justify-center rounded-full bg-destructive text-destructive-foreground active:opacity-80"
-            >
-              <Square className="h-5 w-5" />
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={() => sendMessage()}
-              className={`flex h-[48px] w-[48px] shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground active:opacity-80 ${!input.trim() ? "opacity-50" : ""}`}
-            >
-              <Send className="h-5 w-5" />
-            </button>
-          )}
+      <div className="shrink-0 px-3 pb-4 pt-3 pb-safe">
+        <div className="rounded-2xl bg-gradient-to-r from-blue-400/60 via-purple-500/60 to-violet-400/60 p-[1px]">
+          <div className="rounded-2xl bg-zinc-900 p-3">
+            {/* Input Row */}
+            <div className="flex items-end gap-2">
+              <Textarea
+                ref={inputRef}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    sendMessage();
+                  }
+                }}
+                placeholder="Type a message..."
+                disabled={isLoading}
+                rows={1}
+                className="min-h-[40px] max-h-[120px] flex-1 resize-none border-0 bg-transparent dark:bg-transparent p-0 text-base placeholder:text-muted-foreground/50 focus-visible:ring-0 shadow-none"
+              />
+              {isLoading ? (
+                <button
+                  type="button"
+                  onClick={abortRequest}
+                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-red-500/80 text-white transition-colors hover:bg-red-500 active:scale-95"
+                >
+                  <Square className="h-4 w-4" />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => sendMessage()}
+                  disabled={!input.trim()}
+                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-purple-600 text-white transition-all hover:from-blue-400 hover:to-purple-500 active:scale-95 disabled:opacity-40 disabled:hover:from-blue-500 disabled:hover:to-purple-600"
+                >
+                  <Send className="h-4 w-4" />
+                </button>
+              )}
+            </div>
+            {/* Bottom Row - Mode Selection */}
+            <div className="mt-3 flex items-center justify-between">
+              <Popover open={permissionPopoverOpen} onOpenChange={setPermissionPopoverOpen}>
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
+                    className="flex items-center gap-1.5 rounded-full bg-muted/50 px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted"
+                  >
+                    <Shield className={`h-4 w-4 ${
+                      permissionMode === "default" ? "text-green-500" :
+                      permissionMode === "acceptEdits" ? "text-yellow-500" :
+                      permissionMode === "plan" ? "text-blue-500" :
+                      "text-red-500"
+                    }`} />
+                    <span>
+                      {permissionMode === "default" && "Default"}
+                      {permissionMode === "acceptEdits" && "Accept Edits"}
+                      {permissionMode === "plan" && "Plan"}
+                      {permissionMode === "bypassPermissions" && "Bypass"}
+                    </span>
+                    <ChevronDown className="h-3.5 w-3.5" />
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent align="start" className="w-56 p-1">
+                  <div className="flex flex-col">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPermissionMode("default");
+                        setPermissionPopoverOpen(false);
+                      }}
+                      className={`flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors hover:bg-muted ${
+                        permissionMode === "default" ? "bg-muted" : ""
+                      }`}
+                    >
+                      <Shield className="h-4 w-4 text-green-500" />
+                      <div className="flex flex-col items-start">
+                        <span>Default</span>
+                        <span className="text-xs text-muted-foreground">Ask for permissions</span>
+                      </div>
+                      {permissionMode === "default" && (
+                        <Check className="ml-auto h-4 w-4 text-primary" />
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPermissionMode("acceptEdits");
+                        setPermissionPopoverOpen(false);
+                      }}
+                      className={`flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors hover:bg-muted ${
+                        permissionMode === "acceptEdits" ? "bg-muted" : ""
+                      }`}
+                    >
+                      <Shield className="h-4 w-4 text-yellow-500" />
+                      <div className="flex flex-col items-start">
+                        <span>Accept Edits</span>
+                        <span className="text-xs text-muted-foreground">Auto-approve file edits</span>
+                      </div>
+                      {permissionMode === "acceptEdits" && (
+                        <Check className="ml-auto h-4 w-4 text-primary" />
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPermissionMode("plan");
+                        setPermissionPopoverOpen(false);
+                      }}
+                      className={`flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors hover:bg-muted ${
+                        permissionMode === "plan" ? "bg-muted" : ""
+                      }`}
+                    >
+                      <Shield className="h-4 w-4 text-blue-500" />
+                      <div className="flex flex-col items-start">
+                        <span>Plan Mode</span>
+                        <span className="text-xs text-muted-foreground">Read-only, no edits</span>
+                      </div>
+                      {permissionMode === "plan" && (
+                        <Check className="ml-auto h-4 w-4 text-primary" />
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPermissionMode("bypassPermissions");
+                        setPermissionPopoverOpen(false);
+                      }}
+                      className={`flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors hover:bg-muted ${
+                        permissionMode === "bypassPermissions" ? "bg-muted" : ""
+                      }`}
+                    >
+                      <Shield className="h-4 w-4 text-red-500" />
+                      <div className="flex flex-col items-start">
+                        <span>Bypass Permissions</span>
+                        <span className="text-xs text-muted-foreground">Auto-approve everything</span>
+                      </div>
+                      {permissionMode === "bypassPermissions" && (
+                        <Check className="ml-auto h-4 w-4 text-primary" />
+                      )}
+                    </button>
+                  </div>
+                </PopoverContent>
+              </Popover>
+              <Popover open={modelPopoverOpen} onOpenChange={setModelPopoverOpen}>
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
+                    className="flex items-center gap-1.5 rounded-full bg-muted/50 px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted"
+                  >
+                    <Bot className="h-4 w-4 text-purple-500" />
+                    <span>
+                      {selectedModel === "opus" && "Claude Opus"}
+                      {selectedModel === "sonnet" && "Claude Sonnet"}
+                      {selectedModel === "haiku" && "Claude Haiku"}
+                    </span>
+                    <ChevronDown className="h-3.5 w-3.5" />
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent align="end" className="w-48 p-1">
+                  <div className="flex flex-col">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedModel("opus");
+                        setModelPopoverOpen(false);
+                      }}
+                      className={`flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors hover:bg-muted ${
+                        selectedModel === "opus" ? "bg-muted" : ""
+                      }`}
+                    >
+                      <Bot className="h-4 w-4 text-amber-500" />
+                      <span>Claude Opus</span>
+                      {selectedModel === "opus" && (
+                        <Check className="ml-auto h-4 w-4 text-primary" />
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedModel("sonnet");
+                        setModelPopoverOpen(false);
+                      }}
+                      className={`flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors hover:bg-muted ${
+                        selectedModel === "sonnet" ? "bg-muted" : ""
+                      }`}
+                    >
+                      <Bot className="h-4 w-4 text-purple-500" />
+                      <span>Claude Sonnet</span>
+                      {selectedModel === "sonnet" && (
+                        <Check className="ml-auto h-4 w-4 text-primary" />
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedModel("haiku");
+                        setModelPopoverOpen(false);
+                      }}
+                      className={`flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors hover:bg-muted ${
+                        selectedModel === "haiku" ? "bg-muted" : ""
+                      }`}
+                    >
+                      <Bot className="h-4 w-4 text-green-500" />
+                      <span>Claude Haiku</span>
+                      {selectedModel === "haiku" && (
+                        <Check className="ml-auto h-4 w-4 text-primary" />
+                      )}
+                    </button>
+                  </div>
+                </PopoverContent>
+              </Popover>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -504,20 +1074,8 @@ const MessageBubble = memo(function MessageBubble({ message }: { message: Messag
   const isUser = message.role === "user";
 
   return (
-    <div className={`flex items-start gap-2 ${isUser ? "flex-row-reverse" : ""}`}>
-      <div
-        className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${
-          isUser ? "bg-primary/10" : "bg-orange-500/10"
-        }`}
-      >
-        {isUser ? (
-          <User className="h-4 w-4 text-primary" />
-        ) : (
-          <Bot className="h-4 w-4 text-orange-500" />
-        )}
-      </div>
-
-      <div className={`flex min-w-0 max-w-[85%] flex-col gap-2 ${isUser ? "items-end" : ""}`}>
+    <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
+      <div className={`flex min-w-0 max-w-[90%] flex-col gap-2 ${isUser ? "items-end" : ""}`}>
         {/* Thinking */}
         {message.thinking && message.thinking.length > 0 && (
           <Collapsible>
@@ -552,9 +1110,11 @@ const MessageBubble = memo(function MessageBubble({ message }: { message: Messag
           hasCommandTags(message.content) ? (
             <CommandDisplay content={message.content} />
           ) : (
-            <Card
-              className={`w-full break-words rounded-2xl p-3 ${
-                isUser ? "bg-primary text-primary-foreground" : "bg-muted"
+            <div
+              className={`w-full break-words rounded-2xl px-4 py-3 ${
+                isUser
+                  ? "bg-indigo-950/90 text-indigo-100 ring-1 ring-indigo-800/50"
+                  : "bg-zinc-800/80 text-zinc-100"
               }`}
             >
               {isUser ? (
@@ -564,7 +1124,7 @@ const MessageBubble = memo(function MessageBubble({ message }: { message: Messag
                   <Markdown content={message.content} />
                 </div>
               )}
-            </Card>
+            </div>
           )
         )}
       </div>
