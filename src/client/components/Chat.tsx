@@ -146,7 +146,7 @@ export function Chat() {
     }
   };
 
-  const sendMessage = async () => {
+  const sendMessage = useCallback(async () => {
     if (!input.trim() || isLoading) return;
 
     const userMessage = input.trim();
@@ -201,7 +201,7 @@ export function Chat() {
       setCurrentRequestId(null);
       inputRef.current?.focus();
     }
-  };
+  }, [input, isLoading, currentSessionId]);
 
   const abortRequest = async () => {
     if (!currentRequestId) return;
@@ -217,12 +217,12 @@ export function Chat() {
     }
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       sendMessage();
     }
-  };
+  }, [sendMessage]);
 
   const formatDate = (timestamp: number) => {
     const date = new Date(timestamp);
