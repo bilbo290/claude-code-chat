@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback, memo } from "react";
+import { useState, useRef, useEffect, memo } from "react";
 import { Markdown } from "./Markdown";
 import { ToolDisplay } from "./ToolDisplay";
 import { Button } from "@/components/ui/button";
@@ -146,62 +146,61 @@ export function Chat() {
     }
   };
 
-  const sendMessage = useCallback(async () => {
-    if (!input.trim() || isLoading) return;
+  const sendMessage = () => {
+    const trimmed = input.trim();
+    if (!trimmed || isLoading) return;
 
-    const userMessage = input.trim();
     const requestId = crypto.randomUUID();
 
     setInput("");
     setCurrentRequestId(requestId);
-    setMessages((prev) => [...prev, { role: "user", content: userMessage }]);
+    setMessages((prev) => [...prev, { role: "user", content: trimmed }]);
     setIsLoading(true);
 
-    try {
-      const res = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          message: userMessage,
-          sessionId: currentSessionId,
-          requestId,
-        }),
+    fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message: trimmed,
+        sessionId: currentSessionId,
+        requestId,
+      }),
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.aborted) {
+          setMessages((prev) => [
+            ...prev,
+            { role: "system", content: "Request aborted" },
+          ]);
+        } else if (data.success) {
+          setMessages((prev) => [
+            ...prev,
+            {
+              role: "assistant",
+              content: data.response,
+              thinking: data.thinking,
+            },
+          ]);
+          fetchSessions();
+        } else {
+          setMessages((prev) => [
+            ...prev,
+            { role: "assistant", content: `Error: ${data.error}` },
+          ]);
+        }
+      })
+      .catch(() => {
+        setMessages((prev) => [
+          ...prev,
+          { role: "assistant", content: "Failed to connect to server" },
+        ]);
+      })
+      .finally(() => {
+        setIsLoading(false);
+        setCurrentRequestId(null);
       });
-
-      const data = await res.json();
-
-      if (data.aborted) {
-        setMessages((prev) => [
-          ...prev,
-          { role: "system", content: "Request aborted" },
-        ]);
-      } else if (data.success) {
-        setMessages((prev) => [
-          ...prev,
-          {
-            role: "assistant",
-            content: data.response,
-            thinking: data.thinking,
-          },
-        ]);
-        fetchSessions();
-      } else {
-        setMessages((prev) => [
-          ...prev,
-          { role: "assistant", content: `Error: ${data.error}` },
-        ]);
-      }
-    } catch (error) {
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: "Failed to connect to server" },
-      ]);
-    } finally {
-      setIsLoading(false);
-      setCurrentRequestId(null);
-      inputRef.current?.focus();
-    }
-  }, [input, isLoading, currentSessionId]);
+  };
 
   const abortRequest = async () => {
     if (!currentRequestId) return;
@@ -217,12 +216,12 @@ export function Chat() {
     }
   };
 
-  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+  const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       sendMessage();
     }
-  }, [sendMessage]);
+  };
 
   const formatDate = (timestamp: number) => {
     const date = new Date(timestamp);
